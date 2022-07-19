@@ -1,0 +1,283 @@
+Description: user-1k
+Resources:
+  # VPC 지정
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      Tags:
+        - Key: Name
+          Value: VPC-project-k3c
+  # Subnet 생성
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.10.0/24
+      AvailabilityZone: "ap-northeast-2a"
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: subnet-pub1-ap-northeast-2a
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.11.0/24
+      AvailabilityZone: "ap-northeast-2c"
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: subnet-pub2-ap-northeast-2c
+
+
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.20.0/24
+      AvailabilityZone: "ap-northeast-2a"
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: subnet-pri1-ap-northeast-2a
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.21.0/24
+      AvailabilityZone: "ap-northeast-2c"
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: subnet-pri2-ap-northeast-2c
+
+  # 인터넷 게이트웨이
+  IGW:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: Internet-gw
+          
+  # 인터넷 게이트웨이 연결
+  Attachigw:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref IGW
+      VpcId: !Ref VPC
+
+  # 라우팅 테이블 생성
+  PublicRT:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: Pub-rt-igw-ac
+
+  # 인터넷 게이트웨이 라우팅
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: Attachigw
+    Properties:
+      RouteTableId: !Ref PublicRT
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref IGW
+
+  # 명시적 서브넷 연결
+  PublicSubnetRT1Association:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRT
+      SubnetId: !Ref PublicSubnet1
+  PublicSubnetRT2Association:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRT
+      SubnetId: !Ref PublicSubnet2
+
+  # Public 서버 보안그룹
+  EC2SG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: allow 22, 80
+      GroupName: WEB-sg
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+      VpcId: !Ref VPC
+
+  # ALB 보안그룹
+  ALBSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: allow 80, 443
+      GroupName: ALB-sg
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      VpcId: !Ref VPC
+
+
+  # DB 보안그룹
+  DBSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: allow 3306
+      GroupName: DB-sg
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: 0.0.0.0/0
+      VpcId: !Ref VPC
+
+
+  # Key페어 가져오기
+  KeyPair:
+    Type: AWS::EC2::KeyPair
+    Properties:
+      KeyName: "k8s"
+
+  # Public EC2 생성
+  EC2WEB:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: ami-0fd0765afb77bcca7
+      KeyName: !Ref KeyPair
+      AvailabilityZone: "ap-northeast-2a"
+      InstanceType: t2.micro
+      SubnetId: !Ref PublicSubnet1
+      SecurityGroupIds:
+        - !Ref EC2SG
+      UserData:
+        Fn::Base64:
+          !Join [ "", [
+          "#!/bin/bash\n",
+          "#Install APM for Web Server\n",
+          "yum install -y httpd\n",
+          "systemctl enable httpd mariadb\n",
+          "systemctl start httpd\n",
+          "systemctl enabled httpd\n",
+          "echo 'TEST PAGE - Instance 1' > /var/www/html/index.html"] ]
+      Tags:
+        - Key: Name
+          Value: WEB1
+
+  EC2WEB2:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: ami-0fd0765afb77bcca7
+      KeyName: !Ref KeyPair
+      AvailabilityZone: "ap-northeast-2c"
+      InstanceType: t2.micro
+      SubnetId: !Ref PublicSubnet2
+      SecurityGroupIds:
+        - !Ref EC2SG
+      UserData:
+        Fn::Base64:
+          !Join [ "", [
+          "#!/bin/bash\n",
+          "#Install APM for Web Server\n",
+          "yum install -y httpd\n",
+          "systemctl enable httpd mariadb\n",
+          "systemctl start httpd\n",
+          "systemctl enabled httpd\n",
+          "echo 'TEST PAGE - Instance 2' > /var/www/html/index.html"] ]
+      Tags:
+        - Key: Name
+          Value: WEB2
+
+
+  # 타깃 그룹 추가
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: !Ref VPC
+      Name: Target-gr1
+      Port: 80
+      Protocol: HTTP
+      HealthCheckEnabled: true
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: /
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 5
+      UnhealthyThresholdCount: 2
+      TargetType: instance
+      Targets:
+        - Id: !Ref EC2WEB
+        - Id: !Ref EC2WEB2
+
+
+# 로드밸런서 추가
+  MyLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: ELB-ac
+      Type: application
+      Scheme: internet-facing
+      SecurityGroups:
+        - !Ref ALBSG
+      Subnets:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+
+# ALB 리스너 추가
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+      LoadBalancerArn: !Ref MyLoadBalancer
+      Port: 80
+      Protocol: HTTP
+
+# SubnetGroup 생성
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: DBGrouping
+      DBSubnetGroupName: Subgr-pri-ac
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+
+
+# RDS 제작
+  RDS:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBName: DB1
+      Engine: MySQL
+      EngineVersion: 8.0.28
+      DBInstanceIdentifier: mysql
+      DBInstanceClass: db.r6g.large
+      MasterUsername: 'root'
+      MasterUserPassword: '223334444'
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      VPCSecurityGroups:
+        - !Ref DBSG
+      AllocatedStorage: 50
+      MultiAZ: True
+      PubliclyAccessible: False
